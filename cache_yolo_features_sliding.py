@@ -7,7 +7,7 @@ import torch
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
-from accident_detection_model import YOLOFeatureExtractor
+from src.accident_detection_model import YOLOFeatureExtractor
 import torchvision.transforms as transforms
 import pickle
 import cv2

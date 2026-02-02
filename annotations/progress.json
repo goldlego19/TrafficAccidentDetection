@@ -1,0 +1,6 @@
+{
+  "frames_root": "./data/cadp/extracted_frames",
+  "last_video_id": null,
+  "last_frame_idx": null,
+  "completed": []
+}

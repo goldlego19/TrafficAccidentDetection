@@ -5,8 +5,8 @@ Optimized for 80%+ precision with sliding window augmentation
 
 import torch
 from torch.utils.data import random_split
-from cached_dataset_sliding import CachedFeatureDatasetSliding
-from accident_detection_model import AccidentDetectionLSTM
+from src.cached_dataset_sliding import CachedFeatureDatasetSliding
+from src.accident_detection_model import AccidentDetectionLSTM
 import torch.nn as nn
 from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
 import numpy as np

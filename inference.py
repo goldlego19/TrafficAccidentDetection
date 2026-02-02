@@ -5,7 +5,7 @@ Inference script for traffic accident detection
 import cv2
 import numpy as np
 import torch
-from accident_detection_model import AccidentDetectionPipeline
+from src.accident_detection_model import AccidentDetectionPipeline
 import argparse
 from pathlib import Path
 import torchvision.transforms as transforms

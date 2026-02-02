@@ -5,8 +5,8 @@ Tests all thresholds to find optimal operating points
 
 import torch
 import numpy as np
-from cached_dataset_sliding import CachedFeatureDatasetSliding
-from accident_detection_model import AccidentDetectionLSTM
+from src.cached_dataset_sliding import CachedFeatureDatasetSliding
+from src.accident_detection_model import AccidentDetectionLSTM
 from torch.utils.data import random_split
 from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
 import matplotlib.pyplot as plt
