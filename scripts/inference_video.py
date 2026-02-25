@@ -1,190 +1,145 @@
 import sys
 import os
+import glob
+import re
 import cv2
 import torch
+import torch.nn as nn
+from torchvision import transforms, models
 import numpy as np
-from pathlib import Path
-from ultralytics import YOLO
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from src.accident_detection_model import AccidentDetectionLSTM
+from PIL import Image
 
 # --- CONFIGURATION ---
-MODEL_PATH = 'checkpoints/best_model.pth'
-YOLO_PATH = 'yolo11m.pt'  # Matches your new training
-TARGET_FOLDER = "data/cadp/extracted_frames/000012" # <--- CHECK THIS PATH
-OUTPUT_VIDEO = "final_production_output.mp4"
-IMG_SIZE = (640, 640)
+# Point this to the ROOT folder containing all your sub-folders (000001, 000002, etc.)
+RAW_FRAMES_ROOT = "./data/cadp/extracted_frames" 
+OUTPUT_ROOT = "./data/inference_output"
+CHECKPOINT_PATH = "./checkpoints/best_resnet_model.pth"
 
-# --- TUNING  ---
-RISK_THRESHOLD = 0.65     # Raised threshold (since model is paranoid)
-HORIZON_LINE = 0.30       # Ignore top 40% of screen (Distant overlaps)
-MIN_BOX_SIZE = 0.02       # Ignore tiny dots
-TRIGGER_FRAMES = 3        # Wait 3 frames to confirm crash
-# ---------------------
+# --- THRESHOLD SETTINGS ---
+CONFIDENCE_THRESHOLD = 0.98   
+PIXEL_THRESHOLD = 2500        
+REQUIRED_FRAMES = 5           
+COOLDOWN_FRAMES = 60          
 
-def enhance_image(img):
-    """Matches the CLAHE enhancement used during training"""
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    cl = clahe.apply(l)
-    limg = cv2.merge((cl, a, b))
-    return cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+os.makedirs(OUTPUT_ROOT, exist_ok=True)
 
-def calculate_max_iou(boxes, img_height):
-    if len(boxes) < 2: return 0.0, -1, -1
+def process_video(video_folder_path, model, device, transform):
+    video_name = os.path.basename(os.path.normpath(video_folder_path))
+    video_path = os.path.join(OUTPUT_ROOT, f"final_diagnostic_{video_name}.mp4")
     
-    max_iou = 0.0
-    pair = (-1, -1)
-    
-    horizon_y = img_height * HORIZON_LINE
-    min_h = img_height * MIN_BOX_SIZE
+    # Get and sort frames
+    frame_files = sorted(glob.glob(os.path.join(video_folder_path, '*.jpg')), 
+                         key=lambda f: int(re.findall(r'\d+', os.path.basename(f))[-1]))
 
-    for i in range(len(boxes)):
-        for j in range(i + 1, len(boxes)):
-            boxA = boxes[i]; boxB = boxes[j]
+    if len(frame_files) < 2:
+        return f"Skipped {video_name}: Not enough frames."
+
+    # Setup Video Writer
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v') # Switch back to XVID if you still get .dll errors
+    out_video = cv2.VideoWriter(video_path, fourcc, 30.0, (1280, 360))
+
+    # Physics & Trigger Variables
+    prvs_gray = cv2.cvtColor(cv2.resize(cv2.imread(frame_files[0]), (640, 360)), cv2.COLOR_BGR2GRAY)
+    hsv = np.zeros((360, 640, 3), dtype=np.uint8)
+    hsv[..., 1] = 255
+    prvs_flow = None
+    
+    trigger_counter = 0
+    cooldown_counter = 0
+    is_alarm_active = False
+
+    for i in range(1, len(frame_files)):
+        img = cv2.imread(frame_files[i])
+        if img is None: continue
+        curr_frame = cv2.resize(img, (640, 360))
+        curr_gray = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2GRAY)
+
+        curr_flow = cv2.calcOpticalFlowFarneback(prvs_gray, curr_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+
+        if prvs_flow is not None:
+            flow_diff = curr_flow - prvs_flow
+            mag, ang = cv2.cartToPolar(flow_diff[..., 0], flow_diff[..., 1])
             
-            # FILTER 1: Horizon (Fixes Perspective False Positives)
-            cyA = (boxA[1] + boxA[3]) / 2
-            cyB = (boxB[1] + boxB[3]) / 2
-            if cyA < horizon_y and cyB < horizon_y: continue
-
-            # FILTER 2: Size (Fixes Noise)
-            if (boxA[3] - boxA[1]) < min_h: continue
-
-            # Calculate IoU
-            xA = max(boxA[0], boxB[0]); yA = max(boxA[1], boxB[1])
-            xB = min(boxA[2], boxB[2]); yB = min(boxA[3], boxB[3])
-            interArea = max(0, xB - xA) * max(0, yB - yA)
+            # --- THE ROI FIX ---
+            # Ignores the very bottom of the screen to stop perspective false alarms
+            mag[320:, :] = 0 
             
-            if interArea == 0: continue
+            mag[mag < 3.0] = 0.0 
             
-            boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
-            boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
-            iou = interArea / float(boxAArea + boxBArea - interArea)
-            
-            if iou > max_iou:
-                max_iou = iou
-                pair = (i, j)
-                
-    return max_iou, pair[0], pair[1]
+            hsv[..., 0] = ang * 180 / np.pi / 2
+            hsv[..., 2] = np.clip(mag * 10.0, 0, 255).astype(np.uint8)
+            flow_bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
 
-def run_production_inference():
-    print(f"🎬 Processing: {TARGET_FOLDER}")
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = AccidentDetectionLSTM(hidden_dim=64, num_layers=1, dropout=0.5).to(device)
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
-    model.eval()
-    yolo = YOLO(YOLO_PATH)
-    
-    folder = Path(TARGET_FOLDER)
-    frames = sorted(folder.glob('*.jpg'), key=lambda x: int(x.stem) if x.stem.isdigit() else x.name)
-    if not frames: return
-
-    # Video Setup
-    first_frame = cv2.imread(str(frames[0]))
-    h, w, _ = first_frame.shape
-    out = cv2.VideoWriter(OUTPUT_VIDEO, cv2.VideoWriter_fourcc(*'mp4v'), 30, (w, h))
-    
-    buffer = []
-    accident_counter = 0
-
-    print("   Settings: CLAHE=On | Horizon Filter=On | Weighted Risk=On")
-
-    for i, frame_path in enumerate(frames):
-        img_raw = cv2.imread(str(frame_path))
-        if img_raw is None: continue
-        
-        # 1. ENHANCE (Match Training)
-        img_enhanced = enhance_image(img_raw)
-        
-        # 2. YOLO
-        img_resized = cv2.resize(img_enhanced, IMG_SIZE)
-        results = yolo(img_resized, conf=0.15, iou=0.5, classes=[2,3,5,7], verbose=False)
-        boxes_raw = results[0].boxes.data.cpu().numpy()
-        
-        # 3. Features
-        if len(boxes_raw) > 0:
-            boxes_norm = boxes_raw.copy()
-            boxes_norm[:, 0] /= IMG_SIZE[1]; boxes_norm[:, 1] /= IMG_SIZE[0]
-            boxes_norm[:, 2] /= IMG_SIZE[1]; boxes_norm[:, 3] /= IMG_SIZE[0]
-            boxes_norm = boxes_norm[boxes_norm[:, 0].argsort()][:5]
-            feat = boxes_norm.flatten()
-            feat = np.pad(feat, (0, 128 - len(feat))) if len(feat) < 128 else feat[:128]
-        else:
-            feat = np.zeros(128)
-
-        buffer.append(feat)
-        if len(buffer) > 16: buffer.pop(0)
-        
-        # 4. AI Prediction
-        lstm_prob = 0.0
-        if len(buffer) == 16:
-            inp = torch.FloatTensor(np.array(buffer)).unsqueeze(0).to(device)
+            input_tensor = transform(Image.fromarray(cv2.cvtColor(flow_bgr, cv2.COLOR_BGR2RGB))).unsqueeze(0).to(device)
             with torch.no_grad():
-                lstm_prob = model(inp).item()
+                prob = model(input_tensor).item()
 
-        # 5. Overlap (With Horizon Filter)
-        # Pass 'IMG_SIZE[0]' (640) because YOLO boxes are relative to that resize
-        current_iou, idxA, idxB = calculate_max_iou(boxes_raw[:, :4], IMG_SIZE[0]) if len(boxes_raw) > 0 else (0.0, -1, -1)
+            bright_pixels = np.sum(hsv[..., 2] > 50)
+            instant_hit = (prob > CONFIDENCE_THRESHOLD) and (bright_pixels > PIXEL_THRESHOLD)
 
-        # 6. Weighted Risk
-        # 40% AI + 60% Geometry (Trust physics more than paranoid AI)
-        risk_score = (lstm_prob * 0.4) + (current_iou * 0.6)
-        
-        is_accident = False
-        if risk_score > RISK_THRESHOLD:
-            is_accident = True
-            accident_counter += 1
-        else:
-            accident_counter = max(0, accident_counter - 1)
+            if instant_hit:
+                trigger_counter += 1
+            else:
+                trigger_counter = max(0, trigger_counter - 1)
+
+            if trigger_counter >= REQUIRED_FRAMES:
+                is_alarm_active = True
+                cooldown_counter = COOLDOWN_FRAMES
+
+            if is_alarm_active:
+                cooldown_counter -= 1
+                if cooldown_counter <= 0:
+                    is_alarm_active = False
+                    trigger_counter = 0
+
+            display_frame = curr_frame.copy()
+            text_color = (0, 0, 255) if is_alarm_active else (0, 255, 0)
+            status = "!! ACCIDENT !!" if is_alarm_active else "Safe"
             
-        final_alert = accident_counter >= TRIGGER_FRAMES
+            cv2.putText(display_frame, f"STATUS: {status}", (20, 50), 2, 1.2, text_color, 3)
+            cv2.putText(display_frame, f"AI Prob: {prob:.2f} | Pixels: {bright_pixels}", (20, 90), 2, 0.6, (255, 255, 255), 1)
 
-        # --- DRAWING (On Raw Image for Display) ---
-        img_display = img_raw.copy()
-        
-        # Horizon Line (Debug)
-        line_y = int(h * HORIZON_LINE)
-        cv2.line(img_display, (0, line_y), (w, line_y), (0, 255, 255), 2)
+            if is_alarm_active:
+                cv2.rectangle(display_frame, (0,0), (640,360), (0,0,255), 15)
 
-        # Boxes
-        for b_idx, box in enumerate(boxes_raw):
-            x1, y1, x2, y2 = box[:4].astype(int)
-            # Rescale to original size
-            x1 = int(x1 * (w / IMG_SIZE[1])); y1 = int(y1 * (h / IMG_SIZE[0]))
-            x2 = int(x2 * (w / IMG_SIZE[1])); y2 = int(y2 * (h / IMG_SIZE[0]))
-            
-            # Check Ignore Status
-            cy = (y1 + y2) / 2
-            is_ignored = cy < line_y
-            
-            color = (100, 100, 100) if is_ignored else (0, 255, 0)
-            if b_idx in [idxA, idxB] and final_alert: color = (0, 0, 255)
-            
-            cv2.rectangle(img_display, (x1, y1), (x2, y2), color, 2)
+            out_video.write(np.hstack((display_frame, flow_bgr)))
 
-        # Dashboard
-        cv2.rectangle(img_display, (0, 0), (w, 60), (0, 0, 0), -1)
-        risk_color = (0, 255, 0)
-        if risk_score > 0.45: risk_color = (0, 165, 255)
-        if risk_score > RISK_THRESHOLD: risk_color = (0, 0, 255)
-        
-        text = f"Risk: {risk_score:.2f} (AI:{lstm_prob:.2f} IoU:{current_iou:.2f})"
-        cv2.putText(img_display, text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, risk_color, 2)
-        cv2.putText(img_display, "IGNORE ZONE", (5, line_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        prvs_gray, prvs_flow = curr_gray, curr_flow
 
-        if final_alert:
-            cv2.putText(img_display, "ACCIDENT DETECTED", (50, h//2), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 4)
-            cv2.rectangle(img_display, (0, 0), (w, h), (0, 0, 255), 10)
+    out_video.release()
+    return f"Done: {video_name}"
 
-        out.write(img_display)
-        if i % 30 == 0: print(f"Processing... Risk: {risk_score:.2f}", end='\r')
+def main():
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"🚀 Initializing Batch Inference on {device}...")
+    
+    model = models.resnet18(weights=None)
+    model.fc = nn.Sequential(
+        nn.Linear(model.fc.in_features, 256),
+        nn.ReLU(),
+        nn.Dropout(0.5),
+        nn.Linear(256, 1),
+        nn.Sigmoid()
+    )
+    model.load_state_dict(torch.load(CHECKPOINT_PATH, map_location=device, weights_only=True))
+    model.to(device)
+    model.eval()
 
-    out.release()
-    print(f"\n✅ Done! Saved to {OUTPUT_VIDEO}")
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
 
-if __name__ == "__main__":
-    run_production_inference()
+    # Get list of all folders in the root frames directory
+    video_folders = [f.path for f in os.scandir(RAW_FRAMES_ROOT) if f.is_dir()]
+    print(f"📂 Found {len(video_folders)} videos to process.")
+
+    for folder in video_folders:
+        result = process_video(folder, model, device, transform)
+        print(result)
+
+    print("✅ All videos processed!")
+
+if __name__ == '__main__':
+    main()

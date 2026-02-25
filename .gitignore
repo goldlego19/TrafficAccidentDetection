@@ -7,3 +7,5 @@ logs
 merged_dataset
 data
 best_temporal_model.pth
+results/videos
+checkpoints

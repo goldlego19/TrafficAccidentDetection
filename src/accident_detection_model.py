@@ -82,3 +82,61 @@ class AccidentDetectionLSTM(nn.Module):
         attended = torch.sum(attention_weights * lstm_out, dim=1)
         output = self.fc(self.dropout(attended))
         return output
+    
+
+
+class InfluenceMapCNN(nn.Module):
+    def __init__(self):
+        super(InfluenceMapCNN, self).__init__()
+        
+        # Five Convolutional Layers
+        self.features = nn.Sequential(
+            # Conv 1
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2), # 224 -> 112
+            
+            # Conv 2 (64 channels as specified in the paper)
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2), # 112 -> 56
+            
+            # Conv 3
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2), # 56 -> 28
+            
+            # Conv 4
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2), # 28 -> 14
+            
+            # Conv 5 (512 channels as specified in the paper)
+            nn.Conv2d(256, 512, kernel_size=3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2)  # 14 -> 7
+        )
+        
+        # Three Fully Connected Layers (4096, 1024, 2)
+        # Input to FC is 512 channels * 7 * 7 = 25088
+        self.classifier = nn.Sequential(
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(),
+            nn.Dropout(0.5), # Standard practice to prevent overfitting
+            nn.Linear(4096, 1024),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(1024, 1) # Outputting 1 node for BCE Loss (Accident vs No Accident)
+        )
+
+    def forward(self, x):
+        # Input x is an Influence Map image
+        x = self.features(x)
+        x = x.view(x.size(0), -1) # Flatten
+        x = self.classifier(x)
+        return torch.sigmoid(x) # Equivalent to SoftMax for binary classification

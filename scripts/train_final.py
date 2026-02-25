@@ -1,189 +1,118 @@
 import sys
 import os
-
-# --- PATH FIX: Add the project root to Python's search path ---
-# This tells Python to look one level up (..) for the 'src' folder
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-# -------------------------------------------------------------
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-import numpy as np
-import pickle
+from torch.utils.data import DataLoader, Subset
+from torchvision import datasets, transforms, models
 import logging
-from datetime import datetime
-from src.accident_detection_model import AccidentDetectionLSTM
+from tqdm import tqdm # --- IMPORTED TQDM ---
 
 # --- CONFIG ---
-# Note: Since we are running from 'scripts/', we point to '../feature_cache'
-# OR we assume you run this command FROM the root folder.
-# To be safe, let's use absolute paths relative to this script.
-BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # scripts/
-ROOT_DIR = os.path.dirname(BASE_DIR)                  # TrafficAccidentDetection/
-
-CACHE_FILE = os.path.join(ROOT_DIR, 'feature_cache', 'final_features.pkl')
-LOG_DIR = os.path.join(ROOT_DIR, 'logs')
-CHECKPOINT_DIR = os.path.join(ROOT_DIR, 'checkpoints')
-
-BATCH_SIZE = 16
-EPOCHS = 100
-LR = 0.0005
-# --------------
-
-# Setup Directories
-os.makedirs(LOG_DIR, exist_ok=True)
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'optical_flow_maps')
+CHECKPOINT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'checkpoints')
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
-# Setup Logging
-def setup_logger():
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_filename = os.path.join(LOG_DIR, f'training_log_{timestamp}.txt')
-    
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    
-    file_handler = logging.FileHandler(log_filename, encoding='utf-8')
-    file_handler.setFormatter(logging.Formatter('%(message)s'))
-    logger.addHandler(file_handler)
-    
+BATCH_SIZE = 32
+EPOCHS = 30 
+# --------------
 
-    if sys.stdout.encoding != 'utf-8':
-        try:
-            sys.stdout.reconfigure(encoding='utf-8')
-        except AttributeError:
-            pass 
-            
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(logging.Formatter('%(message)s'))
-    logger.addHandler(console_handler)
-    
-    return logger, log_filename
-
-logger, log_file = setup_logger()
-
-class CachedDataset(Dataset):
-    def __init__(self, data):
-        self.data = data
-        self.keys = list(data.keys())
-    def __len__(self):
-        return len(self.keys)
-    def __getitem__(self, idx):
-        item = self.data[self.keys[idx]]
-        return (torch.FloatTensor(item['features']), 
-                torch.FloatTensor([item['label']]))
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 def train():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    logger.info("="*50)
-    logger.info(f"🚀 STARTING TRAINING ON {device}")
-    logger.info(f"📝 Log file: {log_file}")
-    logger.info(f"⚙️  Config: Batch={BATCH_SIZE}, LR={LR}, Epochs={EPOCHS}")
-    logger.info("="*50)
-    
-    if not os.path.exists(CACHE_FILE):
-        logger.error(f"❌ Error: Cache file not found at: {CACHE_FILE}")
-        logger.error("   Run 'python scripts/step2_cache_features.py' first!")
-        return
+    logging.info(f"🚀 STARTING FROZEN RESNET18 ON {device}")
 
-    logger.info("📂 Loading Data...")
-    with open(CACHE_FILE, 'rb') as f:
-        data = pickle.load(f)
-        
-    # Split Data 80/20
-    keys = list(data.keys())
-    np.random.shuffle(keys)
+    train_transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
     
-    split_idx = int(len(keys) * 0.8)
-    train_keys = keys[:split_idx]
-    val_keys = keys[split_idx:]
+    val_transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+    full_train_data = datasets.ImageFolder(root=DATA_DIR, transform=train_transform)
+    full_val_data = datasets.ImageFolder(root=DATA_DIR, transform=val_transform)
     
-    train_data = {k: data[k] for k in train_keys}
-    val_data = {k: data[k] for k in val_keys}
+    accident_idx = full_train_data.class_to_idx.get('accident', 0)
     
-    # Count stats
-    train_labels = [d['label'] for d in train_data.values()]
-    val_labels = [d['label'] for d in val_data.values()]
+    dataset_size = len(full_train_data)
+    indices = torch.randperm(dataset_size).tolist()
+    train_size = int(0.8 * dataset_size)
+
+    train_dataset = Subset(full_train_data, indices[:train_size])
+    val_dataset = Subset(full_val_data, indices[train_size:])
+
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
+
+    model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
     
-    logger.info(f"✅ Data Loaded:")
-    logger.info(f"   Train: {len(train_data)} samples (Accidents: {sum(train_labels)}, Normal: {len(train_labels)-sum(train_labels)})")
-    logger.info(f"   Val:   {len(val_data)} samples (Accidents: {sum(val_labels)}, Normal: {len(val_labels)-sum(val_labels)})")
-    
-    train_loader = DataLoader(CachedDataset(train_data), batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(CachedDataset(val_data), batch_size=BATCH_SIZE)
-    
-    # Initialize Model
-    model = AccidentDetectionLSTM().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=LR)
-    criterion = nn.BCELoss() 
-    
+    for param in model.parameters():
+        param.requires_grad = False
+
+    model.fc = nn.Sequential(
+        nn.Linear(model.fc.in_features, 256),
+        nn.ReLU(),
+        nn.Dropout(0.5),
+        nn.Linear(256, 1),
+        nn.Sigmoid()
+    )
+    model = model.to(device)
+
+    optimizer = optim.Adam(model.fc.parameters(), lr=0.001, weight_decay=1e-4)
+    criterion = nn.BCELoss()
     best_f1 = 0.0
-    
-    logger.info("\n🏁 Begin Epochs...")
-    
+
     for epoch in range(EPOCHS):
         model.train()
         total_loss = 0
         
-        for X, y in train_loader:
-            X, y = X.to(device), y.to(device)
+        # --- TRAINING PROGRESS BAR ---
+        # leave=False makes it disappear cleanly after the epoch finishes
+        train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1:02d}/{EPOCHS} [Train]", leave=False)
+        
+        for X, y in train_pbar:
+            X, y = X.to(device), (y == accident_idx).float().unsqueeze(1).to(device)
             optimizer.zero_grad()
-            pred = model(X)
-            loss = criterion(pred, y)
+            loss = criterion(model(X), y)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
             
-        # Validation Phase
+            # Update the progress bar with the current live loss
+            train_pbar.set_postfix(loss=f"{loss.item():.4f}")
+            
         model.eval()
-        all_preds = []
-        all_targets = []
+        tp, fp, tn, fn = 0, 0, 0, 0
+        
+        # --- VALIDATION PROGRESS BAR ---
+        val_pbar = tqdm(val_loader, desc=f"Epoch {epoch+1:02d}/{EPOCHS} [Val]  ", leave=False)
         
         with torch.no_grad():
-            for X, y in val_loader:
-                X, y = X.to(device), y.to(device)
-                pred = model(X)
-                all_preds.extend(pred.cpu().numpy())
-                all_targets.extend(y.cpu().numpy())
-                
-        # Metrics Calculation
-        preds_bin = (np.array(all_preds) > 0.5).astype(int)
-        targets = np.array(all_targets)
-        
-        acc = (preds_bin == targets).mean()
-        
-        # Confusion Matrix elements
-        tp = ((preds_bin == 1) & (targets == 1)).sum()
-        fp = ((preds_bin == 1) & (targets == 0)).sum()
-        tn = ((preds_bin == 0) & (targets == 0)).sum()
-        fn = ((preds_bin == 0) & (targets == 1)).sum()
-        
-        precision = tp / (tp + fp + 1e-8)
-        recall = tp / (tp + fn + 1e-8)
-        f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
-        
+            for X, y in val_pbar:
+                X, y = X.to(device), (y == accident_idx).float().unsqueeze(1).to(device)
+                preds = (model(X) > 0.5).float()
+                tp += ((preds == 1) & (y == 1)).sum().item()
+                fp += ((preds == 1) & (y == 0)).sum().item()
+                tn += ((preds == 0) & (y == 0)).sum().item()
+                fn += ((preds == 0) & (y == 1)).sum().item()
+
+        p = tp / (tp + fp + 1e-8)
+        r = tp / (tp + fn + 1e-8)
+        f1 = 2 * (p * r) / (p + r + 1e-8)
         avg_loss = total_loss / len(train_loader)
         
-        log_msg = (f"Epoch {epoch+1}/{EPOCHS} | Loss: {avg_loss:.4f} | "
-                   f"Val Acc: {acc:.3f} | F1: {f1:.3f} | "
-                   f"P: {precision:.2f} R: {recall:.2f}")
-        logger.info(log_msg)
-        
-        # Detailed confusion matrix every 5 epochs or if F1 improves
-        if (epoch + 1) % 5 == 0 or f1 > best_f1:
-             logger.info(f"   [Matrix] TP: {tp} | FP: {fp} | TN: {tn} | FN: {fn}")
+        logging.info(f"Epoch {epoch+1:02d} | Loss: {avg_loss:.4f} | F1: {f1:.3f} | P: {p:.2f} R: {r:.2f}")
 
         if f1 > best_f1:
             best_f1 = f1
-            save_path = os.path.join(CHECKPOINT_DIR, 'best_model.pth')
-            torch.save(model.state_dict(), save_path)
-            logger.info(f"   ⭐ New Best Model Saved! (F1: {f1:.4f})")
-
-    logger.info("="*50)
-    logger.info(f"🏆 Training Complete. Best F1: {best_f1:.4f}")
-    logger.info(f"💾 Log saved to: {log_file}")
+            torch.save(model.state_dict(), os.path.join(CHECKPOINT_DIR, 'best_resnet_model.pth'))
+            logging.info(f"  ⭐ New Best Model Saved! (F1: {f1:.3f})")
 
 if __name__ == '__main__':
     train()
