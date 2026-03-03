@@ -38,7 +38,7 @@ def extract_frames(video_path, output_root):
 
 if __name__ == "__main__":
     # Example usage: Change these paths to your actual files
-    VIDEO_FILE = "./test.mp4"
-    OUTPUT_DIR = "./data/test/"
+    VIDEO_FILE = "./scripts/marsaBridge.mp4"
+    OUTPUT_DIR = "./data/mbridge/"
     
     extract_frames(VIDEO_FILE, OUTPUT_DIR)

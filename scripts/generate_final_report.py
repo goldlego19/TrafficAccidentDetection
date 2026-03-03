@@ -10,9 +10,9 @@ import seaborn as sns
 from sklearn.metrics import confusion_matrix, roc_curve, auc, classification_report, average_precision_score
 
 # --- CONFIGURATION ---
-TEST_DIR = "./data/split_maps/test"  # Update this path if your test data is located elsewhere
+TEST_DIR = "./data/split_mapsNew/test"  # Update this path if your test data is located elsewhere
 CHECKPOINT_DIR = "./checkpoints"
-BEST_MODEL_PATH = os.path.join(CHECKPOINT_DIR, 'best_resnet_model.pth')
+BEST_MODEL_PATH = os.path.join(CHECKPOINT_DIR, 'best_resnet_model2.pth')
 BATCH_SIZE = 32
 
 def generate_report():
@@ -92,8 +92,8 @@ def generate_report():
     #STANDARD GRAPHS (CM & ROC)
     cm = confusion_matrix(all_true_labels, all_pred_labels)
     plt.figure(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Normal', 'Accident'], yticklabels=['Normal', 'Accident'])
-    plt.title('Test Set Confusion Matrix', fontsize=14)
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Normal(Frames)', 'Accident(Frames)'], yticklabels=['Normal(frames)', 'Accident(Frames)'])
+    plt.title('Test Set Confusion Matrix (Frames)', fontsize=14)
     plt.ylabel('True Class', fontsize=12)
     plt.xlabel('Predicted Class', fontsize=12)
     plt.tight_layout()

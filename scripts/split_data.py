@@ -5,9 +5,9 @@ from tqdm import tqdm
 
 # --- CONFIGURATION ---
 # Where your images are currently sitting
-SOURCE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'optical_flow_maps')
+SOURCE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'optical_flow_mapsNEW')
 # Where you want the new structured dataset to be built
-DEST_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'split_maps')
+DEST_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'split_mapsNEW')
 
 # How much data goes into each folder
 TRAIN_RATIO = 0.8

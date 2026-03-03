@@ -56,8 +56,8 @@ def process_single_video(folder_name, folder_path, crash_start_frame, crash_end_
 
             if is_crashing:
                 category = "accident"
-            elif not is_danger_zone and frame_num % 10 == 0:
-                category = "normal" # Keep only 10% of safe frames
+            elif not is_danger_zone:
+                category = "normal" 
 
             # --- STEP 5: APPLY PHYSICAL RULES & SAVE ---
             bright_pixels = np.sum(hsv[..., 2] > 50)
@@ -79,7 +79,7 @@ def process_single_video(folder_name, folder_path, crash_start_frame, crash_end_
 
 def main():
     RAW_FRAMES_ROOT = "./data/cadp/extracted_frames" 
-    OUTPUT_ROOT = "./data/optical_flow_maps"
+    OUTPUT_ROOT = "./data/optical_flow_mapsNEW"
     CSV_PATH = "./annotations/accidents_cleaned.csv"
     
     out_accident = os.path.join(OUTPUT_ROOT, 'accident')

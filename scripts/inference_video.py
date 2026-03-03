@@ -10,12 +10,12 @@ import numpy as np
 from PIL import Image
 
 # --- CONFIGURATION ---
-RAW_FRAMES_ROOT = "./data/cadp/extracted_frames" 
-OUTPUT_ROOT = "./data/inference_output"
-CHECKPOINT_PATH = "./checkpoints/best_resnet_model.pth"
+RAW_FRAMES_ROOT = "./data/mBridge/" 
+OUTPUT_ROOT = "./data/inference_outputtest"
+CHECKPOINT_PATH = "./checkpoints/best_resnet_model2.pth"
 
 # --- THE DUAL-KEY THRESHOLDS ---
-CONFIDENCE_THRESHOLD = 0.98   # AI must be 98% sure it's a crash
+CONFIDENCE_THRESHOLD = 0.80   # AI must be 98% sure it's a crash
 PIXEL_THRESHOLD = 2500        # Must be a massive explosion of kinetic energy
 REQUIRED_FRAMES = 5           # Must see violence for 5 consecutive frames
 COOLDOWN_FRAMES = 60          # Keep the alarm active for 2 seconds (at 30fps)

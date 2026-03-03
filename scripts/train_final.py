@@ -10,7 +10,7 @@ from tqdm import tqdm
 # PHASE 1: CONFIGURATION & SETUP
 
 # Point directly to our newly split folders
-BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'split_maps')
+BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'split_mapsNew')
 TRAIN_DIR = os.path.join(BASE_DIR, 'train')
 VAL_DIR = os.path.join(BASE_DIR, 'val')
 
@@ -126,13 +126,13 @@ def train():
         # Save the model if it's the best one yet
         if f1 > best_f1:
             best_f1 = f1
-            torch.save(model.state_dict(), os.path.join(CHECKPOINT_DIR, 'best_resnet_model.pth'))
+            torch.save(model.state_dict(), os.path.join(CHECKPOINT_DIR, 'best_resnet_model2.pth'))
             logging.info(f"New Best Model Saved! (F1: {f1:.3f})")
 
     # PHASE 7: YOLO-STYLE FINAL SUMMARY
 
     logging.info(f"\n{EPOCHS} epochs completed. Generating final report...")
-    best_model_path = os.path.join(CHECKPOINT_DIR, 'best_resnet_model.pth')
+    best_model_path = os.path.join(CHECKPOINT_DIR, 'best_resnet_model2.pth')
     
     # Load the absolute best weights back into the model for the final test
     model.load_state_dict(torch.load(best_model_path))
