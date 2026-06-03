@@ -13,11 +13,11 @@ def extract_frames(video_path, output_root):
     # 2. Open the video file
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"❌ Error: Could not open video {video_path}")
+        print(f"Error: Could not open video {video_path}")
         return
 
     frame_count = 0
-    print(f"🚀 Starting extraction for: {video_name}")
+    print(f"Starting extraction for: {video_name}")
 
     while True:
         ret, frame = cap.read()
@@ -25,7 +25,6 @@ def extract_frames(video_path, output_root):
             break
         
         # 3. Save frame as JPG (using high quality)
-        # Naming format: 0.jpg, 1.jpg, etc. to match your sorting logic
         save_path = os.path.join(output_folder, f"{frame_count}.jpg")
         cv2.imwrite(save_path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
         
@@ -34,10 +33,9 @@ def extract_frames(video_path, output_root):
             print(f"  Extracted {frame_count} frames...")
 
     cap.release()
-    print(f"✅ Finished! {frame_count} frames saved to: {output_folder}")
+    print(f"Finished! {frame_count} frames saved to: {output_folder}")
 
 if __name__ == "__main__":
-    # Example usage: Change these paths to your actual files
     VIDEO_FILE = "./scripts/marsaBridge.mp4"
     OUTPUT_DIR = "./data/mbridge/"
     
